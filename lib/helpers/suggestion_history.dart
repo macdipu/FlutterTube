@@ -17,6 +17,6 @@ class SuggestionHistory{
 
   static void init() async{
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    suggestions =  prefs.getStringList('suggestions')!;
+    suggestions =  prefs.getStringList('suggestions') ?? [];
   }
 }
