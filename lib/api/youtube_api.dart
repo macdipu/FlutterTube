@@ -10,7 +10,6 @@ import 'helpers/helpers_extention.dart';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as parser;
 import 'package:collection/collection.dart';
-import 'dart:developer';
 
 class YoutubeApi {
   String? _searchToken;
@@ -99,8 +98,8 @@ class YoutubeApi {
           .toList(growable: false);
       print('🌐 API: Found ${scriptText.length} script tags');
 
-      var initialData =
-      scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+      var initialData = scriptText
+          .firstWhereOrNull((e) => e.contains('var ytInitialData = '));
       initialData ??= scriptText
           .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
 
@@ -110,62 +109,118 @@ class YoutubeApi {
       }
       print('🌐 API: Found ytInitialData');
 
-      var jsonMap = extractJson(initialData!);
+      var jsonMap = extractJson(initialData);
       if (jsonMap == null) {
         print('❌ API: Failed to extract JSON from initialData');
         return list;
       }
       print('🌐 API: Successfully extracted JSON map');
 
-      if (jsonMap != null) {
-        var contents = jsonMap
-            .get('contents')
-            ?.get('twoColumnBrowseResultsRenderer')
-            ?.getList('tabs')
-            ?.firstOrNull
-            ?.get('tabRenderer')
-            ?.get('content')
-            ?.get('sectionListRenderer')
-            ?.getList('contents')
-            ?.firstOrNull
-            ?.get('itemSectionRenderer')
-            ?.getList('contents')
-            ?.firstOrNull
-            ?.get('shelfRenderer')
-            ?.get('content')
-            ?.get('expandedShelfContentsRenderer')
-            ?.getList('items');
-        var firstList = contents != null ? contents.toList() : [];
-        print('🌐 API: First list has ${firstList.length} items');
+      // Try to find videos in the tab structure
+      var tabs = jsonMap
+          .get('contents')
+          ?.get('twoColumnBrowseResultsRenderer')
+          ?.getList('tabs');
 
-        var secondContents = jsonMap
-            .get('contents')
-            ?.get('twoColumnBrowseResultsRenderer')
-            ?.getList('tabs')
-            ?.firstOrNull
-            ?.get('tabRenderer')
-            ?.get('content')
-            ?.get('sectionListRenderer')
-            ?.getList('contents')
-            ?.elementAtSafe(3)
-            ?.get('itemSectionRenderer')
-            ?.getList('contents')
-            ?.firstOrNull
-            ?.get('shelfRenderer')
-            ?.get('content')
-            ?.get('expandedShelfContentsRenderer')
-            ?.getList('items');
-        var secondList = secondContents != null ? secondContents.toList() : [];
-        print('🌐 API: Second list has ${secondList.length} items');
+      if (tabs != null) {
+        print('🌐 API: Found ${tabs.length} tabs');
 
-        list = [...firstList, ...secondList];
-        print('✅ API: Total items: ${list.length}');
+        // Search through all tabs for video content
+        for (var i = 0; i < tabs.length; i++) {
+          var tab = tabs.elementAtSafe(i);
+          var tabContent = tab?.get('tabRenderer')?.get('content');
+
+          if (tabContent == null) continue;
+
+          print('🔍 API: Tab $i content keys: ${tabContent.keys.toList()}');
+
+          // NEW FORMAT: richGridRenderer directly in content
+          var richGridRenderer = tabContent.get('richGridRenderer');
+          if (richGridRenderer != null) {
+            print(
+                '🔍 API: richGridRenderer keys: ${richGridRenderer.keys.toList()}');
+
+            var directRichGrid = richGridRenderer.getList('contents');
+            if (directRichGrid != null) {
+              print(
+                  '🔍 API: richGridRenderer has ${directRichGrid.length} total items');
+
+              // Filter out continuationItemRenderer and only keep richItemRenderer
+              var videoItems = directRichGrid.where((item) {
+                if (item == null) return false;
+                // Keep items that have richItemRenderer (actual videos)
+                if (item.containsKey('richItemRenderer')) return true;
+                // Skip continuationItemRenderer and other non-video items
+                print('🔍 API: Skipping item with keys: ${item.keys.toList()}');
+                return false;
+              }).toList();
+
+              if (videoItems.isNotEmpty) {
+                print(
+                    '🌐 API: Found ${videoItems.length} video items in direct richGridRenderer (tab $i)');
+                list.addAll(videoItems);
+                continue; // Found content, move to next tab
+              } else {
+                print(
+                    '⚠️ API: richGridRenderer had ${directRichGrid.length} items but 0 videos');
+              }
+            } else {
+              print('⚠️ API: richGridRenderer.contents is null');
+            }
+          }
+
+          // OLD FORMAT: sectionListRenderer with nested content
+          var tabContents =
+              tabContent.get('sectionListRenderer')?.getList('contents');
+
+          if (tabContents != null) {
+            print('🌐 API: Tab $i has ${tabContents.length} sections');
+
+            // Search through all sections in this tab
+            for (var j = 0; j < tabContents.length; j++) {
+              var section = tabContents.elementAtSafe(j);
+
+              // Try to get items from richGridRenderer in itemSectionRenderer
+              var richItems = section
+                  ?.get('itemSectionRenderer')
+                  ?.getList('contents')
+                  ?.firstOrNull
+                  ?.get('richGridRenderer')
+                  ?.getList('contents');
+
+              if (richItems != null && richItems.isNotEmpty) {
+                print(
+                    '🌐 API: Found ${richItems.length} rich items in tab $i, section $j');
+                list.addAll(richItems);
+              }
+
+              // Try to get items from shelfRenderer (older format)
+              var shelfItems = section
+                  ?.get('itemSectionRenderer')
+                  ?.getList('contents')
+                  ?.firstOrNull
+                  ?.get('shelfRenderer')
+                  ?.get('content')
+                  ?.get('expandedShelfContentsRenderer')
+                  ?.getList('items');
+
+              if (shelfItems != null && shelfItems.isNotEmpty) {
+                print(
+                    '🌐 API: Found ${shelfItems.length} shelf items in tab $i, section $j');
+                list.addAll(shelfItems);
+              }
+            }
+          }
+        }
       }
+
+      print('✅ API: Total items: ${list.length}');
     } catch (e, stackTrace) {
       print('❌ API ERROR: $e');
       print('❌ API STACK: $stackTrace');
     }
-    print('🌐 API: fetchTrendingVideo completed, returning ${list.length} items');
+    print(
+        '🌐 API: fetchTrendingVideo completed, returning ${list.length} items');
     return list;
   }
 
@@ -173,41 +228,88 @@ class YoutubeApi {
     String params = "4gINGgt5dG1hX2NoYXJ0cw%3D%3D";
     List list = [];
     var client = http.Client();
-    var response = await client.get(
-      Uri.parse(
-        'https://www.youtube.com/feed/trending?bp=$params',
-      ),
-    );
-    var raw = response.body;
-    var root = parser.parse(raw);
-    final scriptText = root
-        .querySelectorAll('script')
-        .map((e) => e.text)
-        .toList(growable: false);
-    var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
-    initialData ??= scriptText
-        .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
-    var jsonMap = extractJson(initialData!);
-    if (jsonMap != null) {
-      var contents = jsonMap
-          .get('contents')
-          ?.get('twoColumnBrowseResultsRenderer')
-          ?.getList('tabs')
-          ?.elementAtSafe(1)
-          ?.get('tabRenderer')
-          ?.get('content')
-          ?.get('sectionListRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('itemSectionRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('shelfRenderer')
-          ?.get('content')
-          ?.get('expandedShelfContentsRenderer')
-          ?.getList('items');
-      list = contents != null ? contents.toList() : [];
+    try {
+      var response = await client.get(
+        Uri.parse(
+          'https://www.youtube.com/feed/trending?bp=$params',
+        ),
+      );
+      var raw = response.body;
+      var root = parser.parse(raw);
+      final scriptText = root
+          .querySelectorAll('script')
+          .map((e) => e.text)
+          .toList(growable: false);
+      var initialData = scriptText
+          .firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+      initialData ??= scriptText
+          .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
+
+      if (initialData == null) {
+        print('❌ API: Could not find ytInitialData in music page');
+        return list;
+      }
+
+      var jsonMap = extractJson(initialData);
+      if (jsonMap != null) {
+        var tabs = jsonMap
+            .get('contents')
+            ?.get('twoColumnBrowseResultsRenderer')
+            ?.getList('tabs');
+
+        if (tabs != null) {
+          for (var i = 0; i < tabs.length; i++) {
+            var tab = tabs.elementAtSafe(i);
+            var tabContent = tab?.get('tabRenderer')?.get('content');
+
+            if (tabContent == null) continue;
+
+            // NEW FORMAT: richGridRenderer directly in content
+            var directRichGrid =
+                tabContent.get('richGridRenderer')?.getList('contents');
+            if (directRichGrid != null && directRichGrid.isNotEmpty) {
+              list.addAll(directRichGrid);
+              continue;
+            }
+
+            // OLD FORMAT: sectionListRenderer with nested content
+            var tabContents =
+                tabContent.get('sectionListRenderer')?.getList('contents');
+            if (tabContents != null) {
+              for (var j = 0; j < tabContents.length; j++) {
+                var section = tabContents.elementAtSafe(j);
+
+                var richItems = section
+                    ?.get('itemSectionRenderer')
+                    ?.getList('contents')
+                    ?.firstOrNull
+                    ?.get('richGridRenderer')
+                    ?.getList('contents');
+
+                if (richItems != null && richItems.isNotEmpty) {
+                  list.addAll(richItems);
+                }
+
+                var shelfItems = section
+                    ?.get('itemSectionRenderer')
+                    ?.getList('contents')
+                    ?.firstOrNull
+                    ?.get('shelfRenderer')
+                    ?.get('content')
+                    ?.get('expandedShelfContentsRenderer')
+                    ?.getList('items');
+
+                if (shelfItems != null && shelfItems.isNotEmpty) {
+                  list.addAll(shelfItems);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e, stackTrace) {
+      print('❌ API ERROR in fetchTrendingMusic: $e');
+      print('❌ API STACK: $stackTrace');
     }
     return list;
   }
@@ -216,41 +318,79 @@ class YoutubeApi {
     String params = "4gIcGhpnYW1pbmdfY29ycHVzX21vc3RfcG9wdWxhcg";
     List list = [];
     var client = http.Client();
-    var response = await client.get(
-      Uri.parse(
-        'https://www.youtube.com/feed/trending?bp=$params',
-      ),
-    );
-    var raw = response.body;
-    var root = parser.parse(raw);
-    final scriptText = root
-        .querySelectorAll('script')
-        .map((e) => e.text)
-        .toList(growable: false);
-    var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
-    initialData ??= scriptText
-        .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
-    var jsonMap = extractJson(initialData!);
-    if (jsonMap != null) {
-      var contents = jsonMap
-          .get('contents')
-          ?.get('twoColumnBrowseResultsRenderer')
-          ?.getList('tabs')
-          ?.elementAtSafe(2)
-          ?.get('tabRenderer')
-          ?.get('content')
-          ?.get('sectionListRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('itemSectionRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('shelfRenderer')
-          ?.get('content')
-          ?.get('expandedShelfContentsRenderer')
-          ?.getList('items');
-      list = contents != null ? contents.toList() : [];
+    try {
+      var response = await client.get(
+        Uri.parse(
+          'https://www.youtube.com/feed/trending?bp=$params',
+        ),
+      );
+      var raw = response.body;
+      var root = parser.parse(raw);
+      final scriptText = root
+          .querySelectorAll('script')
+          .map((e) => e.text)
+          .toList(growable: false);
+      var initialData = scriptText
+          .firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+      initialData ??= scriptText
+          .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
+
+      if (initialData == null) {
+        print('❌ API: Could not find ytInitialData in gaming page');
+        return list;
+      }
+
+      var jsonMap = extractJson(initialData);
+      if (jsonMap != null) {
+        var tabs = jsonMap
+            .get('contents')
+            ?.get('twoColumnBrowseResultsRenderer')
+            ?.getList('tabs');
+
+        if (tabs != null) {
+          for (var i = 0; i < tabs.length; i++) {
+            var tab = tabs.elementAtSafe(i);
+            var tabContents = tab
+                ?.get('tabRenderer')
+                ?.get('content')
+                ?.get('sectionListRenderer')
+                ?.getList('contents');
+
+            if (tabContents != null) {
+              for (var j = 0; j < tabContents.length; j++) {
+                var section = tabContents.elementAtSafe(j);
+
+                var richItems = section
+                    ?.get('itemSectionRenderer')
+                    ?.getList('contents')
+                    ?.firstOrNull
+                    ?.get('richGridRenderer')
+                    ?.getList('contents');
+
+                if (richItems != null && richItems.isNotEmpty) {
+                  list.addAll(richItems);
+                }
+
+                var shelfItems = section
+                    ?.get('itemSectionRenderer')
+                    ?.getList('contents')
+                    ?.firstOrNull
+                    ?.get('shelfRenderer')
+                    ?.get('content')
+                    ?.get('expandedShelfContentsRenderer')
+                    ?.getList('items');
+
+                if (shelfItems != null && shelfItems.isNotEmpty) {
+                  list.addAll(shelfItems);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e, stackTrace) {
+      print('❌ API ERROR in fetchTrendingGaming: $e');
+      print('❌ API STACK: $stackTrace');
     }
     return list;
   }
@@ -259,41 +399,79 @@ class YoutubeApi {
     String params = "4gIKGgh0cmFpbGVycw%3D%3D";
     List list = [];
     var client = http.Client();
-    var response = await client.get(
-      Uri.parse(
-        'https://www.youtube.com/feed/trending?bp=$params',
-      ),
-    );
-    var raw = response.body;
-    var root = parser.parse(raw);
-    final scriptText = root
-        .querySelectorAll('script')
-        .map((e) => e.text)
-        .toList(growable: false);
-    var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
-    initialData ??= scriptText
-        .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
-    var jsonMap = extractJson(initialData!);
-    if (jsonMap != null) {
-      var contents = jsonMap
-          .get('contents')
-          ?.get('twoColumnBrowseResultsRenderer')
-          ?.getList('tabs')
-          ?.elementAtSafe(3)
-          ?.get('tabRenderer')
-          ?.get('content')
-          ?.get('sectionListRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('itemSectionRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('shelfRenderer')
-          ?.get('content')
-          ?.get('expandedShelfContentsRenderer')
-          ?.getList('items');
-      list = contents != null ? contents.toList() : [];
+    try {
+      var response = await client.get(
+        Uri.parse(
+          'https://www.youtube.com/feed/trending?bp=$params',
+        ),
+      );
+      var raw = response.body;
+      var root = parser.parse(raw);
+      final scriptText = root
+          .querySelectorAll('script')
+          .map((e) => e.text)
+          .toList(growable: false);
+      var initialData = scriptText
+          .firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+      initialData ??= scriptText
+          .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
+
+      if (initialData == null) {
+        print('❌ API: Could not find ytInitialData in movies page');
+        return list;
+      }
+
+      var jsonMap = extractJson(initialData);
+      if (jsonMap != null) {
+        var tabs = jsonMap
+            .get('contents')
+            ?.get('twoColumnBrowseResultsRenderer')
+            ?.getList('tabs');
+
+        if (tabs != null) {
+          for (var i = 0; i < tabs.length; i++) {
+            var tab = tabs.elementAtSafe(i);
+            var tabContents = tab
+                ?.get('tabRenderer')
+                ?.get('content')
+                ?.get('sectionListRenderer')
+                ?.getList('contents');
+
+            if (tabContents != null) {
+              for (var j = 0; j < tabContents.length; j++) {
+                var section = tabContents.elementAtSafe(j);
+
+                var richItems = section
+                    ?.get('itemSectionRenderer')
+                    ?.getList('contents')
+                    ?.firstOrNull
+                    ?.get('richGridRenderer')
+                    ?.getList('contents');
+
+                if (richItems != null && richItems.isNotEmpty) {
+                  list.addAll(richItems);
+                }
+
+                var shelfItems = section
+                    ?.get('itemSectionRenderer')
+                    ?.getList('contents')
+                    ?.firstOrNull
+                    ?.get('shelfRenderer')
+                    ?.get('content')
+                    ?.get('expandedShelfContentsRenderer')
+                    ?.getList('items');
+
+                if (shelfItems != null && shelfItems.isNotEmpty) {
+                  list.addAll(shelfItems);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e, stackTrace) {
+      print('❌ API ERROR in fetchTrendingMovies: $e');
+      print('❌ API STACK: $stackTrace');
     }
     return list;
   }
@@ -385,7 +563,7 @@ class YoutubeApi {
         .map((e) => e.text)
         .toList(growable: false);
     var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+        scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
     initialData ??= scriptText
         .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
     var jsonMap = extractJson(initialData!);
@@ -526,7 +704,7 @@ class YoutubeApi {
     VideoData? videoData;
     var client = http.Client();
     var response =
-    await client.get(Uri.parse('https://www.youtube.com/watch?v=$videoId'));
+        await client.get(Uri.parse('https://www.youtube.com/watch?v=$videoId'));
     var raw = response.body;
     var root = parser.parse(raw);
     final scriptText = root
@@ -534,7 +712,7 @@ class YoutubeApi {
         .map((e) => e.text)
         .toList(growable: false);
     var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+        scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
     initialData ??= scriptText
         .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
     var jsonMap = extractJson(initialData!);
@@ -550,16 +728,19 @@ class YoutubeApi {
       videoData = VideoData(
           video: MyVideo(
               videoId: videoId,
-              title: contents!['results']['results']['contents'][0]['videoPrimaryInfoRenderer']['title']['runs'][0]['text'],
-              username: contents['results']['results']['contents'][1]['videoSecondaryInfoRenderer']['owner']['videoOwnerRenderer']['title']['runs'][0]['text'],
-              viewCount: contents['results']['results']['contents'][0]['videoPrimaryInfoRenderer']['viewCount']['videoViewCountRenderer']['shortViewCount']['simpleText'],
-              subscribeCount: contents['results']?['results']?['contents']?[1]?['videoSecondaryInfoRenderer']?['owner']?['videoOwnerRenderer']?['subscriberCountText']?['simpleText'],
+              title: contents!['results']['results']['contents'][0]
+                  ['videoPrimaryInfoRenderer']['title']['runs'][0]['text'],
+              username: contents['results']['results']['contents'][1]['videoSecondaryInfoRenderer']
+                  ['owner']['videoOwnerRenderer']['title']['runs'][0]['text'],
+              viewCount: contents['results']['results']['contents'][0]['videoPrimaryInfoRenderer']['viewCount']
+                  ['videoViewCountRenderer']['shortViewCount']['simpleText'],
+              subscribeCount: contents['results']?['results']?['contents']?[1]?['videoSecondaryInfoRenderer']?['owner']
+                  ?['videoOwnerRenderer']?['subscriberCountText']?['simpleText'],
               likeCount: contents['results']['results']['contents'][0]['videoPrimaryInfoRenderer']['videoActions']['menuRenderer']['topLevelButtons'][0]['toggleButtonRenderer']['defaultText']['simpleText'],
               unlikeCount: '',
               date: contents['results']['results']['contents'][0]['videoPrimaryInfoRenderer']['dateText']['simpleText'],
               channelThumb: contents['results']['results']['contents'][1]['videoSecondaryInfoRenderer']['owner']['videoOwnerRenderer']['thumbnail']['thumbnails'][1]['url'],
-              channelId: contents['results']['results']['contents'][1]['videoSecondaryInfoRenderer']['owner']['videoOwnerRenderer']['navigationEndpoint']['browseEndpoint']['browseId']
-          ),
+              channelId: contents['results']['results']['contents'][1]['videoSecondaryInfoRenderer']['owner']['videoOwnerRenderer']['navigationEndpoint']['browseEndpoint']['browseId']),
           videosList: videosList);
     }
     return videoData;
@@ -573,7 +754,7 @@ class YoutubeApi {
         .map((e) => e.text)
         .toList(growable: false);
     var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+        scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
     initialData ??= scriptText
         .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
     var jsonMap = extractJson(initialData!);
