@@ -24,7 +24,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    print('🚀 HomePage: initState called');
     trending = youtubeApi.fetchTrendingVideo();
+    print('🔄 HomePage: fetchTrendingVideo initiated');
     contentList = [];
   }
 
@@ -72,29 +74,38 @@ class _HomePageState extends State<HomePage> {
             FutureBuilder(
               future: trending,
               builder: (BuildContext context, AsyncSnapshot snapshot) {
+                print('📡 FutureBuilder: connectionState = ${snapshot.connectionState}');
                 switch (snapshot.connectionState) {
                   case ConnectionState.waiting:
+                    print('⏳ FutureBuilder: waiting...');
                     return Padding(
                       padding: EdgeInsets.only(top: 300),
                       child: loading(),
                     );
                   case ConnectionState.active:
+                    print('🔄 FutureBuilder: active...');
                     return Padding(
                       padding: EdgeInsets.only(top: 300),
                       child: loading(),
                     );
                   case ConnectionState.none:
+                    print('❌ FutureBuilder: Connection None');
                     return const Text("Connection None");
                   case ConnectionState.done:
+                    print('✅ FutureBuilder: done');
                     if (snapshot.error != null) {
+                      print('❌ FutureBuilder ERROR: ${snapshot.error}');
+                      print('❌ FutureBuilder STACK: ${snapshot.stackTrace}');
                       return Container(
                           child: Text(snapshot.stackTrace.toString()));
                     } else {
                       if (snapshot.hasData) {
+                        print('✅ FutureBuilder: has data, length = ${snapshot.data?.length ?? 0}');
                         contentList = snapshot.data;
                         return Body(
                             contentList: contentList!, youtubeApi: youtubeApi);
                       } else {
+                        print('⚠️ FutureBuilder: no data');
                         return Center(child: Container(child: Text("No data")));
                       }
                     }
@@ -179,13 +190,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<bool> _refresh() async {
+    print('🔄 _refresh: Starting refresh...');
     List newList = await youtubeApi.fetchTrendingVideo();
+    print('🔄 _refresh: Received ${newList.length} items');
     if(newList.isNotEmpty){
       setState(() {
         contentList = newList;
       });
+      print('✅ _refresh: Updated content list');
       return true;
     }
+    print('⚠️ _refresh: New list is empty');
     return false;
   }
 }

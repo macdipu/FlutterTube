@@ -77,64 +77,95 @@ class YoutubeApi {
   }
 
   Future fetchTrendingVideo() async {
+    print('🌐 API: fetchTrendingVideo started');
     SuggestionHistory.init();
     List list = [];
     var client = http.Client();
-    var response = await client.get(
-      Uri.parse(
-        'https://www.youtube.com/feed/trending',
-      ),
-    );
-    var raw = response.body;
-    var root = parser.parse(raw);
-    final scriptText = root
-        .querySelectorAll('script')
-        .map((e) => e.text)
-        .toList(growable: false);
-    var initialData =
-    scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
-    initialData ??= scriptText
-        .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
-    var jsonMap = extractJson(initialData!);
-    if (jsonMap != null) {
-      var contents = jsonMap
-          .get('contents')
-          ?.get('twoColumnBrowseResultsRenderer')
-          ?.getList('tabs')
-          ?.firstOrNull
-          ?.get('tabRenderer')
-          ?.get('content')
-          ?.get('sectionListRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('itemSectionRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('shelfRenderer')
-          ?.get('content')
-          ?.get('expandedShelfContentsRenderer')
-          ?.getList('items');
-      var firstList = contents != null ? contents.toList() : [];
-      var secondContents = jsonMap
-          .get('contents')
-          ?.get('twoColumnBrowseResultsRenderer')
-          ?.getList('tabs')
-          ?.firstOrNull
-          ?.get('tabRenderer')
-          ?.get('content')
-          ?.get('sectionListRenderer')
-          ?.getList('contents')
-          ?.elementAtSafe(3)
-          ?.get('itemSectionRenderer')
-          ?.getList('contents')
-          ?.firstOrNull
-          ?.get('shelfRenderer')
-          ?.get('content')
-          ?.get('expandedShelfContentsRenderer')
-          ?.getList('items');
-      var secondList = secondContents != null ? secondContents.toList() : [];
-      list = [...firstList, ...secondList];
+    try {
+      print('🌐 API: Making HTTP request to YouTube trending...');
+      var response = await client.get(
+        Uri.parse(
+          'https://www.youtube.com/feed/trending',
+        ),
+      );
+      print('🌐 API: Response status code: ${response.statusCode}');
+      print('🌐 API: Response body length: ${response.body.length}');
+
+      var raw = response.body;
+      var root = parser.parse(raw);
+      final scriptText = root
+          .querySelectorAll('script')
+          .map((e) => e.text)
+          .toList(growable: false);
+      print('🌐 API: Found ${scriptText.length} script tags');
+
+      var initialData =
+      scriptText.firstWhereOrNull((e) => e.contains('var ytInitialData = '));
+      initialData ??= scriptText
+          .firstWhereOrNull((e) => e.contains('window["ytInitialData"] ='));
+
+      if (initialData == null) {
+        print('❌ API: Could not find ytInitialData in page');
+        return list;
+      }
+      print('🌐 API: Found ytInitialData');
+
+      var jsonMap = extractJson(initialData!);
+      if (jsonMap == null) {
+        print('❌ API: Failed to extract JSON from initialData');
+        return list;
+      }
+      print('🌐 API: Successfully extracted JSON map');
+
+      if (jsonMap != null) {
+        var contents = jsonMap
+            .get('contents')
+            ?.get('twoColumnBrowseResultsRenderer')
+            ?.getList('tabs')
+            ?.firstOrNull
+            ?.get('tabRenderer')
+            ?.get('content')
+            ?.get('sectionListRenderer')
+            ?.getList('contents')
+            ?.firstOrNull
+            ?.get('itemSectionRenderer')
+            ?.getList('contents')
+            ?.firstOrNull
+            ?.get('shelfRenderer')
+            ?.get('content')
+            ?.get('expandedShelfContentsRenderer')
+            ?.getList('items');
+        var firstList = contents != null ? contents.toList() : [];
+        print('🌐 API: First list has ${firstList.length} items');
+
+        var secondContents = jsonMap
+            .get('contents')
+            ?.get('twoColumnBrowseResultsRenderer')
+            ?.getList('tabs')
+            ?.firstOrNull
+            ?.get('tabRenderer')
+            ?.get('content')
+            ?.get('sectionListRenderer')
+            ?.getList('contents')
+            ?.elementAtSafe(3)
+            ?.get('itemSectionRenderer')
+            ?.getList('contents')
+            ?.firstOrNull
+            ?.get('shelfRenderer')
+            ?.get('content')
+            ?.get('expandedShelfContentsRenderer')
+            ?.getList('items');
+        var secondList = secondContents != null ? secondContents.toList() : [];
+        print('🌐 API: Second list has ${secondList.length} items');
+
+        list = [...firstList, ...secondList];
+        print('✅ API: Total items: ${list.length}');
+      }
+    } catch (e, stackTrace) {
+      print('❌ API ERROR: $e');
+      print('❌ API STACK: $stackTrace');
     }
+    print('🌐 API: fetchTrendingVideo completed, returning ${list.length} items');
     return list;
   }
 
