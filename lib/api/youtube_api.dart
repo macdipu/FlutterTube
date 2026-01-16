@@ -341,13 +341,60 @@ class YoutubeApi {
 
   /// Backward-compatible: HomePage still calls this.
   /// In this app it effectively loads Trending/Explore.
-  Future<TrendingResult> fetchExplore() => navBarFetchTrending();
+  Future<TrendingResult> fetchExplore() async {
+    final filters = await fetchExploreFiltersFromWeb();
+    final items = await fetchTrendingByPrimaryFilter(filters.first);
+
+    return TrendingResult(
+      items: items,
+      filters: filters,
+    );
+  }
 
   /// Backward-compatible: HomePage calls this to populate top chips.
   ///
   /// We return stable primary trending filters here.
-  Future<List<YoutubeFilter>> fetchExploreFiltersFromWeb() async =>
-      primaryTrendingFilters;
+  Future<List<YoutubeFilter>> fetchExploreFiltersFromWeb() async {
+    final filters = await fetchPseudoDynamicTrendingChips();
+
+    if (filters.length <= 1) {
+      return primaryTrendingFilters;
+    }
+    return filters;
+  }
+  Future<List<YoutubeFilter>> fetchPseudoDynamicTrendingChips({
+    String seed = 'music',
+    int limit = 10,
+  }) async {
+    try {
+      final suggestions = await fetchSuggestions(seed);
+
+      if (suggestions.isEmpty) {
+        return primaryTrendingFilters;
+      }
+
+      final chips = suggestions
+          .where((s) => s.length < 30)
+          .take(limit)
+          .map((s) => YoutubeFilter(
+        title: _capitalize(s),
+        params: s,
+      ))
+          .toList();
+
+      return [
+        const YoutubeFilter(title: 'All', params: ''),
+        ...chips,
+      ];
+    } catch (_) {
+      return primaryTrendingFilters;
+    }
+  }
+
+  String _capitalize(String text) {
+    if (text.isEmpty) return text;
+    return text[0].toUpperCase() + text.substring(1);
+  }
 
   /// Suggestions used by search UI.
   Future<List<String>> fetchSuggestions(String query) async {
