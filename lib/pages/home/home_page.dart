@@ -7,6 +7,7 @@ import '/api/youtube_api.dart';
 import '/pages/home/body.dart';
 import '/utilities/custom_app_bar.dart';
 import '/widgets/loading.dart';
+import 'package:flutter/foundation.dart';
 
 class HomePage extends StatefulWidget {
   @override
@@ -15,9 +16,10 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   YoutubeApi youtubeApi = YoutubeApi();
-  List? contentList;
+  List contentList = [];
+  List<YoutubeFilter> filters = const [YoutubeFilter(title: 'All', params: '')];
   int _selectedIndex = 0;
-  late Future trending;
+  late Future<TrendingResult> trending;
   int trendingIndex = 0;
   late double progressPosition;
 
@@ -25,9 +27,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     print('🚀 HomePage: initState called');
-    trending = youtubeApi.fetchTrendingVideo();
-    print('🔄 HomePage: fetchTrendingVideo initiated');
-    contentList = [];
+    trending = youtubeApi.fetchExplore();
+    print('🔄 HomePage: fetchExplore initiated');
   }
 
   @override
@@ -55,65 +56,91 @@ class _HomePageState extends State<HomePage> {
           child: Text("TODO"),
         );
       case 3:
-        return  Center(
+        return Center(
           child: Text("TODO"),
         );
     }
     return RefreshIndicator(
       onRefresh: _refresh,
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            Padding(
-              padding: EdgeInsets.only(left: 10, right: 10, top: 18, bottom: 10),
-              child: Categories(
-                callback: changeTrendingState,
-                trendingIndex: trendingIndex,
+      child: FutureBuilder<TrendingResult>(
+        future: trending,
+        builder: (BuildContext context, AsyncSnapshot<TrendingResult> snapshot) {
+          print('📡 FutureBuilder: connectionState = ${snapshot.connectionState}');
+
+          if (snapshot.connectionState == ConnectionState.waiting ||
+              snapshot.connectionState == ConnectionState.active) {
+            print('⏳ FutureBuilder: waiting/active...');
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                children: [
+                  _categoriesBar(filters),
+                  Padding(
+                    padding: EdgeInsets.only(top: 300),
+                    child: loading(),
+                  ),
+                ],
               ),
+            );
+          }
+
+          if (snapshot.connectionState == ConnectionState.none) {
+            print('❌ FutureBuilder: Connection None');
+            return const Text("Connection None");
+          }
+
+          if (snapshot.hasError) {
+            print('❌ FutureBuilder ERROR: ${snapshot.error}');
+            print('❌ FutureBuilder STACK: ${snapshot.stackTrace}');
+            return Container(child: Text(snapshot.stackTrace.toString()));
+          }
+
+          if (!snapshot.hasData) {
+            print('⚠️ FutureBuilder: no data');
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                children: [
+                  _categoriesBar(filters),
+                  const Center(child: Text("No data")),
+                ],
+              ),
+            );
+          }
+
+          final result = snapshot.data!;
+          final fetchedFilters = result.filters.isNotEmpty ? result.filters : filters;
+          _syncFilters(fetchedFilters);
+          contentList = result.items;
+
+          print('✅ FutureBuilder: has data, length = ${contentList.length}');
+
+          return SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Column(
+              children: [
+                _categoriesBar(filters),
+                contentList.isNotEmpty
+                    ? Body(contentList: contentList, youtubeApi: youtubeApi)
+                    : const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 120),
+                        child: Center(child: Text("No data")),
+                      ),
+              ],
             ),
-            FutureBuilder(
-              future: trending,
-              builder: (BuildContext context, AsyncSnapshot snapshot) {
-                print('📡 FutureBuilder: connectionState = ${snapshot.connectionState}');
-                switch (snapshot.connectionState) {
-                  case ConnectionState.waiting:
-                    print('⏳ FutureBuilder: waiting...');
-                    return Padding(
-                      padding: EdgeInsets.only(top: 300),
-                      child: loading(),
-                    );
-                  case ConnectionState.active:
-                    print('🔄 FutureBuilder: active...');
-                    return Padding(
-                      padding: EdgeInsets.only(top: 300),
-                      child: loading(),
-                    );
-                  case ConnectionState.none:
-                    print('❌ FutureBuilder: Connection None');
-                    return const Text("Connection None");
-                  case ConnectionState.done:
-                    print('✅ FutureBuilder: done');
-                    if (snapshot.error != null) {
-                      print('❌ FutureBuilder ERROR: ${snapshot.error}');
-                      print('❌ FutureBuilder STACK: ${snapshot.stackTrace}');
-                      return Container(
-                          child: Text(snapshot.stackTrace.toString()));
-                    } else {
-                      if (snapshot.hasData) {
-                        print('✅ FutureBuilder: has data, length = ${snapshot.data?.length ?? 0}');
-                        contentList = snapshot.data;
-                        return Body(
-                            contentList: contentList!, youtubeApi: youtubeApi);
-                      } else {
-                        print('⚠️ FutureBuilder: no data');
-                        return Center(child: Container(child: Text("No data")));
-                      }
-                    }
-                }
-              },
-            ),
-          ],
-        ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _categoriesBar(List<YoutubeFilter> data) {
+    return Padding(
+      padding: EdgeInsets.only(left: 10, right: 10, top: 18, bottom: 10),
+      child: Categories(
+        filters: data,
+        onSelected: changeTrendingState,
+        selectedIndex: trendingIndex.clamp(0, data.isEmpty ? 0 : data.length - 1),
       ),
     );
   }
@@ -164,43 +191,63 @@ class _HomePageState extends State<HomePage> {
   }
 
   void changeTrendingState(int index) {
-    switch (index) {
-      case 0:
-        setState(() {
-          trending = youtubeApi.fetchTrendingVideo();
-        });
-        break;
-      case 1:
-        setState(() {
-          trending = youtubeApi.fetchTrendingMusic();
-        });
-        break;
-      case 2:
-        setState(() {
-          trending = youtubeApi.fetchTrendingGaming();
-        });
-        break;
-      case 3:
-        setState(() {
-          trending = youtubeApi.fetchTrendingMovies();
-        });
-        break;
+    if (index < 0 || index >= filters.length) {
+      return;
     }
-    trendingIndex = index;
+    setState(() {
+      trendingIndex = index;
+      final query = '${filters[index].title.toLowerCase()} trending';
+      trending = youtubeApi
+          .fetchSearchVideo(query)
+          .then((items) => TrendingResult(items: items, filters: filters));
+      contentList = [];
+    });
+  }
+
+  void _syncFilters(List<YoutubeFilter> fetched) {
+    final currentKeys = filters.map((f) => '${f.title}|${f.params}').toList();
+    final nextKeys = fetched.map((f) => '${f.title}|${f.params}').toList();
+    if (!listEquals(currentKeys, nextKeys)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        setState(() {
+          filters = fetched;
+          if (trendingIndex >= filters.length) {
+            trendingIndex = 0;
+          }
+        });
+      });
+    }
   }
 
   Future<bool> _refresh() async {
     print('🔄 _refresh: Starting refresh...');
-    List newList = await youtubeApi.fetchTrendingVideo();
-    print('🔄 _refresh: Received ${newList.length} items');
-    if(newList.isNotEmpty){
+    final latestFilters = await youtubeApi.fetchExploreFiltersFromWeb();
+    final effectiveFilters = latestFilters.isNotEmpty ? latestFilters : filters;
+    final safeIndex = effectiveFilters.isEmpty
+        ? 0
+        : trendingIndex.clamp(0, effectiveFilters.length - 1);
+    final selectedFilter =
+        effectiveFilters.isNotEmpty ? effectiveFilters[safeIndex] : const YoutubeFilter(title: 'All', params: '');
+    final query = '${selectedFilter.title.toLowerCase()} trending';
+    final items = await youtubeApi.fetchSearchVideo(query);
+
+    print('🔄 _refresh: Received ${items.length} items');
+
+    if (mounted) {
       setState(() {
-        contentList = newList;
+        filters = effectiveFilters.isNotEmpty ? effectiveFilters : filters;
+        trendingIndex = safeIndex;
+        contentList = items;
+        trending = Future.value(TrendingResult(items: items, filters: filters));
       });
-      print('✅ _refresh: Updated content list');
-      return true;
     }
-    print('⚠️ _refresh: New list is empty');
-    return false;
+
+    if (items.isEmpty) {
+      print('⚠️ _refresh: New list is empty');
+      return false;
+    }
+
+    print('✅ _refresh: Updated content list');
+    return true;
   }
 }
